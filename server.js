@@ -8,11 +8,27 @@ const app = express();
 
 const FRONTEND_URL = process.env.FRONTEND_URL;
 
+const allowedOrigins = [
+  "http://localhost:5173",
+  "https://bus-playlist-client.vercel.app",
+].filter(Boolean);
+
 app.use(
   cors({
-    origin: ["http://localhost:5173", FRONTEND_URL].filter(Boolean),
+    origin: allowedOrigins,
+    methods: ["GET", "POST"],
   }),
 );
+
+const server = http.createServer(app);
+
+const io = new Server(server, {
+  cors: {
+    origin: allowedOrigins,
+    methods: ["GET", "POST"],
+    credentials: true,
+  },
+});
 
 app.use(express.json());
 
