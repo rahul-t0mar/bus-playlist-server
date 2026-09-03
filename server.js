@@ -9,9 +9,7 @@ const PORT = process.env.PORT || 3000;
 const API_KEY = process.env.YT_API_KEY;
 const PLAYLIST_ID = "PLLJl2b09clvg";
 
-const allowedOrigins = [
-  "https://bus-playlist-client.vercel.app",
-];
+const allowedOrigins = ["https://bus-playlist-client.vercel.app"];
 
 app.use(
   cors({
@@ -36,7 +34,7 @@ app.use(
     },
     methods: ["GET", "POST", "OPTIONS"],
     allowedHeaders: ["Content-Type"],
-  })
+  }),
 );
 
 app.use(express.json());
@@ -46,47 +44,56 @@ let currentIndex = 0;
 let shuffleOrder = null;
 
 // Load playlist
+
+let playlistPromise = null;
+
 async function loadPlaylist() {
-  try {
-    videos = [];
+  const url =
+    `https://www.googleapis.com/youtube/v3/playlistItems` +
+    `?part=snippet&playlistId=${PLAYLIST_ID}&maxResults=50&key=${YT_API_KEY}`;
 
-    let nextPageToken = "";
+  let allVideos = [];
+  let nextPageToken = "";
 
-    do {
-      const url =
-        `https://www.googleapis.com/youtube/v3/playlistItems` +
-        `?part=snippet&maxResults=50` +
-        `&playlistId=${PLAYLIST_ID}` +
-        `&key=${API_KEY}` +
-        (nextPageToken ? `&pageToken=${nextPageToken}` : "");
+  do {
+    const response = await fetch(`${url}&pageToken=${nextPageToken}`);
 
-      const response = await fetch(url);
-      const data = await response.json();
+    if (!response.ok) {
+      const errorText = await response.text();
+      throw new Error(`YouTube API error ${response.status}: ${errorText}`);
+    }
 
-      if (!response.ok) {
-        throw new Error(JSON.stringify(data));
-      }
+    const data = await response.json();
 
-      const items = data.items || [];
+    const pageVideos = data.items
+      .filter((item) => item.snippet?.resourceId?.videoId)
+      .map((item) => ({
+        videoId: item.snippet.resourceId.videoId,
+        title: item.snippet.title,
+      }));
 
-      for (const item of items) {
-        const videoId = item.snippet?.resourceId?.videoId;
+    allVideos.push(...pageVideos);
 
-        if (videoId) {
-          videos.push({
-            videoId,
-            title: item.snippet.title,
-          });
-        }
-      }
+    nextPageToken = data.nextPageToken || "";
+  } while (nextPageToken);
 
-      nextPageToken = data.nextPageToken || "";
-    } while (nextPageToken);
+  videos = allVideos;
 
-    console.log(`Loaded ${videos.length} videos`);
-  } catch (error) {
-    console.error("Failed to load playlist:", error);
+  console.log(`Loaded ${videos.length} videos from YouTube`);
+
+  return videos;
+}
+
+function ensurePlaylistLoaded() {
+  if (!playlistPromise) {
+    playlistPromise = loadPlaylist().catch((error) => {
+      console.error("Failed to load playlist:", error);
+      playlistPromise = null;
+      throw error;
+    });
   }
+
+  return playlistPromise;
 }
 
 // Health
@@ -120,8 +127,7 @@ app.get("/api/playlist/previous", (req, res) => {
     return res.json(null);
   }
 
-  currentIndex =
-    (currentIndex - 1 + videos.length) % videos.length;
+  currentIndex = (currentIndex - 1 + videos.length) % videos.length;
 
   res.json(videos[currentIndex]);
 });
