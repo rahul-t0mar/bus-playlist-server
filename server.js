@@ -1,19 +1,16 @@
 import "dotenv/config";
 import express from "express";
 import cors from "cors";
-import http from "http";
-import { Server } from "socket.io";
 import fetch from "node-fetch";
 
 const app = express();
-const server = http.createServer(app);
 
-// CORS
 const allowedOrigins = [process.env.FRONTEND_URL].filter(Boolean);
 
 app.use(
   cors({
     origin: (origin, callback) => {
+      // Allow requests without an Origin header
       if (!origin) {
         return callback(null, true);
       }
@@ -26,21 +23,12 @@ app.use(
       return callback(new Error("Not allowed by CORS"));
     },
     methods: ["GET", "POST", "OPTIONS"],
-    credentials: true,
   }),
 );
 
 app.options("*", cors());
 
 app.use(express.json());
-
-const io = new Server(server, {
-  cors: {
-    origin: allowedOrigins,
-    methods: ["GET", "POST"],
-    credentials: true,
-  },
-});
 
 const YT_API_KEY = process.env.YT_API_KEY;
 const PLAYLIST_ID = "PLLJl2b09clvg";
@@ -51,6 +39,11 @@ let shuffleOrder = null;
 
 async function loadPlaylist() {
   try {
+    if (!YT_API_KEY) {
+      console.error("YT_API_KEY is missing");
+      return;
+    }
+
     let allItems = [];
     let pageToken = "";
 
@@ -68,7 +61,7 @@ async function loadPlaylist() {
 
       if (!response.ok || !data.items) {
         console.error("YouTube API error:", data);
-        break;
+        return;
       }
 
       allItems = allItems.concat(data.items);
@@ -82,13 +75,12 @@ async function loadPlaylist() {
         title: item.snippet.title,
       }));
 
-    // Reset shuffle when playlist is reloaded
-    shuffleOrder = null;
     currentIndex = 0;
+    shuffleOrder = null;
 
     console.log(`Loaded ${videos.length} songs`);
-  } catch (err) {
-    console.error("Failed to load playlist:", err);
+  } catch (error) {
+    console.error("Failed to load playlist:", error);
   }
 }
 
@@ -127,12 +119,7 @@ app.get("/api/playlist/next", (req, res) => {
 
   currentIndex = (currentIndex + 1) % videos.length;
 
-  const video = currentVideo();
-
-  // Notify connected clients
-  io.emit("playlist:update", video);
-
-  res.json(video);
+  res.json(currentVideo());
 });
 
 app.get("/api/playlist/previous", (req, res) => {
@@ -142,12 +129,7 @@ app.get("/api/playlist/previous", (req, res) => {
 
   currentIndex = (currentIndex - 1 + videos.length) % videos.length;
 
-  const video = currentVideo();
-
-  // Notify connected clients
-  io.emit("playlist:update", video);
-
-  res.json(video);
+  res.json(currentVideo());
 });
 
 app.post("/api/playlist/shuffle", (req, res) => {
@@ -163,30 +145,9 @@ app.post("/api/playlist/shuffle", (req, res) => {
 
   currentIndex = 0;
 
-  const video = currentVideo();
-
-  // Notify connected clients
-  io.emit("playlist:update", video);
-
-  res.json(video);
+  res.json(currentVideo());
 });
-
-io.on("connection", (socket) => {
-  console.log("Client connected:", socket.id);
-
-  // Send current video immediately
-  socket.emit("playlist:update", currentVideo());
-
-  socket.on("disconnect", () => {
-    console.log("Client disconnected:", socket.id);
-  });
-});
-
-const PORT = process.env.PORT || 3000;
 
 loadPlaylist();
 
-server.listen(PORT, () => {
-  console.log(`Server running on port ${PORT}`);
-  console.log("Allowed origins:", allowedOrigins);
-});
+export default app;
