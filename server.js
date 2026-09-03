@@ -6,11 +6,11 @@ import fetch from "node-fetch";
 const app = express();
 
 const PORT = process.env.PORT || 3000;
-const API_KEY = process.env.YT_API_KEY;
+const YT_API_KEY = process.env.YT_API_KEY;
 const PLAYLIST_ID = "PLLJl2b09clvg";
 
 
-console.log("YT_API_KEY exists:", !!API_KEY);
+console.log("YT_API_KEY exists:", !!YT_API_KEY);
 console.log("PLAYLIST_ID:", PLAYLIST_ID);
 
 const allowedOrigins = ["https://bus-playlist-client.vercel.app"];
