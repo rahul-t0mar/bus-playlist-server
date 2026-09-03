@@ -5,26 +5,37 @@ import fetch from "node-fetch";
 
 const app = express();
 
-const allowedOrigins = [process.env.FRONTEND_URL].filter(Boolean);
+const allowedOrigins = ["https://bus-playlist-client.vercel.app"];
 
-app.use(
-  cors({
-    origin: (origin, callback) => {
-      // Allow requests without an Origin header
-      if (!origin) {
-        return callback(null, true);
-      }
+const corsOptions = {
+  origin: (origin, callback) => {
+    // Allow requests without an Origin
+    if (!origin) {
+      return callback(null, true);
+    }
 
-      if (allowedOrigins.includes(origin)) {
-        return callback(null, true);
-      }
+    // Allow the main production domain
+    if (allowedOrigins.includes(origin)) {
+      return callback(null, true);
+    }
 
-      console.error("CORS blocked origin:", origin);
-      return callback(new Error("Not allowed by CORS"));
-    },
-    methods: ["GET", "POST", "OPTIONS"],
-  }),
-);
+    // Allow Vercel preview deployments
+    if (
+      origin.endsWith(".vercel.app") &&
+      origin.includes("bus-playlist-client")
+    ) {
+      return callback(null, true);
+    }
+
+    console.error("CORS blocked:", origin);
+
+    callback(new Error("Not allowed by CORS"));
+  },
+  methods: ["GET", "POST", "OPTIONS"],
+  allowedHeaders: ["Content-Type"],
+};
+
+app.use(cors(corsOptions));
 
 app.options("*", cors());
 
