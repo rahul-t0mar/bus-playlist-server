@@ -1,26 +1,38 @@
 import "dotenv/config";
-
 import express from "express";
 import cors from "cors";
+import http from "http";
+import { Server } from "socket.io";
 import fetch from "node-fetch";
 
 const app = express();
+const server = http.createServer(app);
 
-const FRONTEND_URL = process.env.FRONTEND_URL;
-
-const allowedOrigins = [
-  "http://localhost:5173",
-  "https://bus-playlist-client.vercel.app",
-].filter(Boolean);
+// CORS
+const allowedOrigins = [process.env.FRONTEND_URL].filter(Boolean);
 
 app.use(
   cors({
-    origin: allowedOrigins,
-    methods: ["GET", "POST"],
+    origin: (origin, callback) => {
+      if (!origin) {
+        return callback(null, true);
+      }
+
+      if (allowedOrigins.includes(origin)) {
+        return callback(null, true);
+      }
+
+      console.error("CORS blocked origin:", origin);
+      return callback(new Error("Not allowed by CORS"));
+    },
+    methods: ["GET", "POST", "OPTIONS"],
+    credentials: true,
   }),
 );
 
-const server = http.createServer(app);
+app.options("*", cors());
+
+app.use(express.json());
 
 const io = new Server(server, {
   cors: {
@@ -29,8 +41,6 @@ const io = new Server(server, {
     credentials: true,
   },
 });
-
-app.use(express.json());
 
 const YT_API_KEY = process.env.YT_API_KEY;
 const PLAYLIST_ID = "PLLJl2b09clvg";
@@ -46,9 +56,9 @@ async function loadPlaylist() {
 
     do {
       const url =
-        `https://www.googleapis.com/youtube/v3/playlistItems` +
-        `?part=snippet,contentDetails` +
-        `&maxResults=50` +
+        "https://www.googleapis.com/youtube/v3/playlistItems" +
+        "?part=snippet,contentDetails" +
+        "&maxResults=50" +
         `&playlistId=${PLAYLIST_ID}` +
         `&key=${YT_API_KEY}` +
         (pageToken ? `&pageToken=${pageToken}` : "");
@@ -56,7 +66,7 @@ async function loadPlaylist() {
       const response = await fetch(url);
       const data = await response.json();
 
-      if (!data.items) {
+      if (!response.ok || !data.items) {
         console.error("YouTube API error:", data);
         break;
       }
@@ -65,10 +75,16 @@ async function loadPlaylist() {
       pageToken = data.nextPageToken || "";
     } while (pageToken);
 
-    videos = allItems.map((item) => ({
-      videoId: item.contentDetails.videoId,
-      title: item.snippet.title,
-    }));
+    videos = allItems
+      .filter((item) => item.contentDetails?.videoId)
+      .map((item) => ({
+        videoId: item.contentDetails.videoId,
+        title: item.snippet.title,
+      }));
+
+    // Reset shuffle when playlist is reloaded
+    shuffleOrder = null;
+    currentIndex = 0;
 
     console.log(`Loaded ${videos.length} songs`);
   } catch (err) {
@@ -76,12 +92,14 @@ async function loadPlaylist() {
   }
 }
 
-function getOrderedIndex(i) {
-  return shuffleOrder ? shuffleOrder[i] : i;
+function getOrderedIndex(index) {
+  return shuffleOrder ? shuffleOrder[index] : index;
 }
 
 function currentVideo() {
-  if (!videos.length) return null;
+  if (!videos.length) {
+    return null;
+  }
 
   const realIndex = getOrderedIndex(currentIndex);
 
@@ -93,7 +111,9 @@ function currentVideo() {
 }
 
 app.get("/api/health", (req, res) => {
-  res.json({ status: "ok" });
+  res.json({
+    status: "ok",
+  });
 });
 
 app.get("/api/playlist/current", (req, res) => {
@@ -101,19 +121,33 @@ app.get("/api/playlist/current", (req, res) => {
 });
 
 app.get("/api/playlist/next", (req, res) => {
-  if (!videos.length) return res.json(null);
+  if (!videos.length) {
+    return res.json(null);
+  }
 
   currentIndex = (currentIndex + 1) % videos.length;
 
-  res.json(currentVideo());
+  const video = currentVideo();
+
+  // Notify connected clients
+  io.emit("playlist:update", video);
+
+  res.json(video);
 });
 
 app.get("/api/playlist/previous", (req, res) => {
-  if (!videos.length) return res.json(null);
+  if (!videos.length) {
+    return res.json(null);
+  }
 
   currentIndex = (currentIndex - 1 + videos.length) % videos.length;
 
-  res.json(currentVideo());
+  const video = currentVideo();
+
+  // Notify connected clients
+  io.emit("playlist:update", video);
+
+  res.json(video);
 });
 
 app.post("/api/playlist/shuffle", (req, res) => {
@@ -129,11 +163,30 @@ app.post("/api/playlist/shuffle", (req, res) => {
 
   currentIndex = 0;
 
-  res.json(currentVideo());
+  const video = currentVideo();
+
+  // Notify connected clients
+  io.emit("playlist:update", video);
+
+  res.json(video);
 });
 
-// Load playlist
+io.on("connection", (socket) => {
+  console.log("Client connected:", socket.id);
+
+  // Send current video immediately
+  socket.emit("playlist:update", currentVideo());
+
+  socket.on("disconnect", () => {
+    console.log("Client disconnected:", socket.id);
+  });
+});
+
+const PORT = process.env.PORT || 3000;
+
 loadPlaylist();
 
-// Export for Vercel
-export default app;
+server.listen(PORT, () => {
+  console.log(`Server running on port ${PORT}`);
+  console.log("Allowed origins:", allowedOrigins);
+});
