@@ -5,123 +5,105 @@ import fetch from "node-fetch";
 
 const app = express();
 
-const allowedOrigins = ["https://bus-playlist-client.vercel.app"];
+const PORT = process.env.PORT || 3000;
+const API_KEY = process.env.YT_API_KEY;
+const PLAYLIST_ID = "PLLJl2b09clvg";
 
-const corsOptions = {
-  origin: (origin, callback) => {
-    // Allow requests without an Origin
-    if (!origin) {
-      return callback(null, true);
-    }
+const allowedOrigins = [
+  "https://bus-playlist-client.vercel.app",
+];
 
-    // Allow the main production domain
-    if (allowedOrigins.includes(origin)) {
-      return callback(null, true);
-    }
+app.use(
+  cors({
+    origin: (origin, callback) => {
+      if (!origin) {
+        return callback(null, true);
+      }
 
-    // Allow Vercel preview deployments
-    if (
-      origin.endsWith(".vercel.app") &&
-      origin.includes("bus-playlist-client")
-    ) {
-      return callback(null, true);
-    }
+      if (allowedOrigins.includes(origin)) {
+        return callback(null, true);
+      }
 
-    console.error("CORS blocked:", origin);
+      if (
+        origin.endsWith(".vercel.app") &&
+        origin.includes("bus-playlist-client")
+      ) {
+        return callback(null, true);
+      }
 
-    callback(new Error("Not allowed by CORS"));
-  },
-  methods: ["GET", "POST", "OPTIONS"],
-  allowedHeaders: ["Content-Type"],
-};
-
-app.use(cors(corsOptions));
-
+      console.log("CORS blocked:", origin);
+      return callback(new Error("Not allowed by CORS"));
+    },
+    methods: ["GET", "POST", "OPTIONS"],
+    allowedHeaders: ["Content-Type"],
+  })
+);
 
 app.use(express.json());
-
-const YT_API_KEY = process.env.YT_API_KEY;
-const PLAYLIST_ID = "PLLJl2b09clvg";
 
 let videos = [];
 let currentIndex = 0;
 let shuffleOrder = null;
 
+// Load playlist
 async function loadPlaylist() {
   try {
-    if (!YT_API_KEY) {
-      console.error("YT_API_KEY is missing");
-      return;
-    }
+    videos = [];
 
-    let allItems = [];
-    let pageToken = "";
+    let nextPageToken = "";
 
     do {
       const url =
-        "https://www.googleapis.com/youtube/v3/playlistItems" +
-        "?part=snippet,contentDetails" +
-        "&maxResults=50" +
+        `https://www.googleapis.com/youtube/v3/playlistItems` +
+        `?part=snippet&maxResults=50` +
         `&playlistId=${PLAYLIST_ID}` +
-        `&key=${YT_API_KEY}` +
-        (pageToken ? `&pageToken=${pageToken}` : "");
+        `&key=${API_KEY}` +
+        (nextPageToken ? `&pageToken=${nextPageToken}` : "");
 
       const response = await fetch(url);
       const data = await response.json();
 
-      if (!response.ok || !data.items) {
-        console.error("YouTube API error:", data);
-        return;
+      if (!response.ok) {
+        throw new Error(JSON.stringify(data));
       }
 
-      allItems = allItems.concat(data.items);
-      pageToken = data.nextPageToken || "";
-    } while (pageToken);
+      const items = data.items || [];
 
-    videos = allItems
-      .filter((item) => item.contentDetails?.videoId)
-      .map((item) => ({
-        videoId: item.contentDetails.videoId,
-        title: item.snippet.title,
-      }));
+      for (const item of items) {
+        const videoId = item.snippet?.resourceId?.videoId;
 
-    currentIndex = 0;
-    shuffleOrder = null;
+        if (videoId) {
+          videos.push({
+            videoId,
+            title: item.snippet.title,
+          });
+        }
+      }
 
-    console.log(`Loaded ${videos.length} songs`);
+      nextPageToken = data.nextPageToken || "";
+    } while (nextPageToken);
+
+    console.log(`Loaded ${videos.length} videos`);
   } catch (error) {
     console.error("Failed to load playlist:", error);
   }
 }
 
-function getOrderedIndex(index) {
-  return shuffleOrder ? shuffleOrder[index] : index;
-}
+// Health
+app.get("/api/health", (req, res) => {
+  res.json({ status: "ok" });
+});
 
-function currentVideo() {
+// Current
+app.get("/api/playlist/current", (req, res) => {
   if (!videos.length) {
-    return null;
+    return res.json(null);
   }
 
-  const realIndex = getOrderedIndex(currentIndex);
-
-  return {
-    ...videos[realIndex],
-    index: currentIndex,
-    total: videos.length,
-  };
-}
-
-app.get("/api/health", (req, res) => {
-  res.json({
-    status: "ok",
-  });
+  res.json(videos[currentIndex]);
 });
 
-app.get("/api/playlist/current", (req, res) => {
-  res.json(currentVideo());
-});
-
+// Next
 app.get("/api/playlist/next", (req, res) => {
   if (!videos.length) {
     return res.json(null);
@@ -129,33 +111,39 @@ app.get("/api/playlist/next", (req, res) => {
 
   currentIndex = (currentIndex + 1) % videos.length;
 
-  res.json(currentVideo());
+  res.json(videos[currentIndex]);
 });
 
+// Previous
 app.get("/api/playlist/previous", (req, res) => {
   if (!videos.length) {
     return res.json(null);
   }
 
-  currentIndex = (currentIndex - 1 + videos.length) % videos.length;
+  currentIndex =
+    (currentIndex - 1 + videos.length) % videos.length;
 
-  res.json(currentVideo());
+  res.json(videos[currentIndex]);
 });
 
+// Shuffle
 app.post("/api/playlist/shuffle", (req, res) => {
-  const { enabled } = req.body;
-
-  if (enabled) {
-    shuffleOrder = [...Array(videos.length).keys()].sort(
-      () => Math.random() - 0.5,
-    );
-  } else {
-    shuffleOrder = null;
+  if (!videos.length) {
+    return res.json(null);
   }
 
+  const shuffled = [...videos];
+
+  for (let i = shuffled.length - 1; i > 0; i--) {
+    const j = Math.floor(Math.random() * (i + 1));
+
+    [shuffled[i], shuffled[j]] = [shuffled[j], shuffled[i]];
+  }
+
+  shuffleOrder = shuffled;
   currentIndex = 0;
 
-  res.json(currentVideo());
+  res.json(shuffleOrder[currentIndex]);
 });
 
 loadPlaylist();
