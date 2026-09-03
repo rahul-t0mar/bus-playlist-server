@@ -9,7 +9,6 @@ const PORT = process.env.PORT || 3000;
 const YT_API_KEY = process.env.YT_API_KEY;
 const PLAYLIST_ID = "PLLJl2b09clvg";
 
-
 console.log("YT_API_KEY exists:", !!YT_API_KEY);
 console.log("PLAYLIST_ID:", PLAYLIST_ID);
 
@@ -109,7 +108,7 @@ app.get("/api/health", (req, res) => {
 // Current
 app.get("/api/playlist/current", async (req, res) => {
   try {
-    await ensurePlaylistLoaded();
+    await loadPlaylist();
 
     if (!videos.length) {
       return res.status(404).json({
